@@ -1780,14 +1780,14 @@ func TestMarshal(t *testing.T) {
 			type X struct {
 				X *X `json:",omitempty"`
 			}
-			var make func(int) *X
-			make = func(n int) *X {
+			var makex func(int) *X
+			makex = func(n int) *X {
 				if n == 0 {
 					return nil
 				}
-				return &X{make(n - 1)}
+				return &X{makex(n - 1)}
 			}
-			return make(100)
+			return makex(100)
 		}(),
 		want:      `{}`,
 		useWriter: true,
@@ -1812,14 +1812,14 @@ func TestMarshal(t *testing.T) {
 			type X struct {
 				XL, XR *X `json:",omitempty"`
 			}
-			var make func(int) *X
-			make = func(n int) *X {
+			var makex func(int) *X
+			makex = func(n int) *X {
 				if n == 0 {
 					return nil
 				}
-				return &X{make(n - 1), make(n - 1)}
+				return &X{XL: makex(n - 1), XR: makex(n - 1)}
 			}
-			return make(8)
+			return makex(8)
 		}(),
 		want:      `{}`,
 		useWriter: true,
