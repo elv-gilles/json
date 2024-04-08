@@ -110,6 +110,7 @@ func makeMethodArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 	switch which := implementsWhich(t, jsonMarshalerV2Type, jsonMarshalerV1Type, textAppenderType, textMarshalerType); which {
 	case jsonMarshalerV2Type:
 		fncs.nonDefault = true
+		defMarshal := fncs.marshal
 		fncs.marshal = func(enc *jsontext.Encoder, va addressableValue, mo *jsonopts.Struct) error {
 			xe := export.Encoder(enc)
 			prevDepth, prevLength := xe.Tokens.DepthLength()
@@ -120,6 +121,15 @@ func makeMethodArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			if (prevDepth != currDepth || prevLength+1 != currLength) && err == nil {
 				err = errors.New("must write exactly one JSON value")
 			}
+			if err == SkipFunc && defMarshal != nil {
+				if prevDepth == currDepth && prevLength == currLength {
+					fncs.nonDefault = false
+					err = defMarshal(enc, va, mo)
+				} else {
+					err = errors.New("must not write any JSON tokens when skipping")
+				}
+			}
+
 			if err != nil {
 				err = wrapSkipFunc(err, "marshal method")
 				// TODO: Avoid wrapping semantic or I/O errors.
@@ -188,6 +198,7 @@ func makeMethodArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 	switch which := implementsWhich(t, jsonUnmarshalerV2Type, jsonUnmarshalerV1Type, textUnmarshalerType); which {
 	case jsonUnmarshalerV2Type:
 		fncs.nonDefault = true
+		defUnmarshal := fncs.unmarshal
 		fncs.unmarshal = func(dec *jsontext.Decoder, va addressableValue, uo *jsonopts.Struct) error {
 			xd := export.Decoder(dec)
 			prevDepth, prevLength := xd.Tokens.DepthLength()
@@ -197,6 +208,14 @@ func makeMethodArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			currDepth, currLength := xd.Tokens.DepthLength()
 			if (prevDepth != currDepth || prevLength+1 != currLength) && err == nil {
 				err = errors.New("must read exactly one JSON value")
+			}
+			if err == SkipFunc && defUnmarshal != nil {
+				if prevDepth == currDepth && prevLength == currLength {
+					fncs.nonDefault = false
+					err = defUnmarshal(dec, va, uo)
+				} else {
+					err = errors.New("must not read any JSON tokens when skipping")
+				}
 			}
 			if err != nil {
 				err = wrapSkipFunc(err, "unmarshal method")

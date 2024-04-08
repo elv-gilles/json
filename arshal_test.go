@@ -129,6 +129,7 @@ type (
 		Pointer       *structAll
 		Interface     any
 	}
+	structAllSkip        structAll
 	structStringifiedAll struct {
 		Bool          bool                  `json:",string"`
 		String        string                `json:",string"`
@@ -480,6 +481,13 @@ type (
 		A *cyclicA `json:",inline"`
 	}
 )
+
+func (s *structAllSkip) UnmarshalJSONV2(dec *jsontext.Decoder, opts Options) error {
+	return SkipFunc
+}
+func (s *structAllSkip) MarshalJSONV2(*jsontext.Encoder, Options) error {
+	return SkipFunc
+}
 
 func (p *allMethods) MarshalJSONV2(enc *jsontext.Encoder, opts Options) error {
 	if got, want := "MarshalJSONV2", p.method; got != want {
@@ -3041,10 +3049,150 @@ func TestMarshal(t *testing.T) {
 		wantErr: &SemanticError{action: "marshal", GoType: marshalJSONv2FuncType, Err: errors.New("must write exactly one JSON value")},
 	}, {
 		name: jsontest.Name("Methods/Invalid/JSONv2/SkipFunc"),
-		in: marshalJSONv2Func(func(enc *jsontext.Encoder, opts Options) error {
-			return SkipFunc
-		}),
-		wantErr: &SemanticError{action: "marshal", GoType: marshalJSONv2FuncType, Err: errors.New("marshal method cannot be skipped")},
+		opts: []Options{jsontext.Expand(true)},
+		in: structAllSkip{
+			Bool:   true,
+			String: "hello",
+			Bytes:  []byte{1, 2, 3},
+			Int:    -64,
+			Uint:   +64,
+			Float:  3.14159,
+			Map:    map[string]string{"key": "value"},
+			StructScalars: structScalars{
+				Bool:   true,
+				String: "hello",
+				Bytes:  []byte{1, 2, 3},
+				Int:    -64,
+				Uint:   +64,
+				Float:  3.14159,
+			},
+			StructMaps: structMaps{
+				MapBool:   map[string]bool{"": true},
+				MapString: map[string]string{"": "hello"},
+				MapBytes:  map[string][]byte{"": {1, 2, 3}},
+				MapInt:    map[string]int64{"": -64},
+				MapUint:   map[string]uint64{"": +64},
+				MapFloat:  map[string]float64{"": 3.14159},
+			},
+			StructSlices: structSlices{
+				SliceBool:   []bool{true},
+				SliceString: []string{"hello"},
+				SliceBytes:  [][]byte{{1, 2, 3}},
+				SliceInt:    []int64{-64},
+				SliceUint:   []uint64{+64},
+				SliceFloat:  []float64{3.14159},
+			},
+			Slice:     []string{"fizz", "buzz"},
+			Array:     [1]string{"goodbye"},
+			Pointer:   new(structAll),
+			Interface: (*structAll)(nil),
+		},
+		want: `{
+	"Bool": true,
+	"String": "hello",
+	"Bytes": "AQID",
+	"Int": -64,
+	"Uint": 64,
+	"Float": 3.14159,
+	"Map": {
+		"key": "value"
+	},
+	"StructScalars": {
+		"Bool": true,
+		"String": "hello",
+		"Bytes": "AQID",
+		"Int": -64,
+		"Uint": 64,
+		"Float": 3.14159
+	},
+	"StructMaps": {
+		"MapBool": {
+			"": true
+		},
+		"MapString": {
+			"": "hello"
+		},
+		"MapBytes": {
+			"": "AQID"
+		},
+		"MapInt": {
+			"": -64
+		},
+		"MapUint": {
+			"": 64
+		},
+		"MapFloat": {
+			"": 3.14159
+		}
+	},
+	"StructSlices": {
+		"SliceBool": [
+			true
+		],
+		"SliceString": [
+			"hello"
+		],
+		"SliceBytes": [
+			"AQID"
+		],
+		"SliceInt": [
+			-64
+		],
+		"SliceUint": [
+			64
+		],
+		"SliceFloat": [
+			3.14159
+		]
+	},
+	"Slice": [
+		"fizz",
+		"buzz"
+	],
+	"Array": [
+		"goodbye"
+	],
+	"Pointer": {
+		"Bool": false,
+		"String": "",
+		"Bytes": "",
+		"Int": 0,
+		"Uint": 0,
+		"Float": 0,
+		"Map": {},
+		"StructScalars": {
+			"Bool": false,
+			"String": "",
+			"Bytes": "",
+			"Int": 0,
+			"Uint": 0,
+			"Float": 0
+		},
+		"StructMaps": {
+			"MapBool": {},
+			"MapString": {},
+			"MapBytes": {},
+			"MapInt": {},
+			"MapUint": {},
+			"MapFloat": {}
+		},
+		"StructSlices": {
+			"SliceBool": [],
+			"SliceString": [],
+			"SliceBytes": [],
+			"SliceInt": [],
+			"SliceUint": [],
+			"SliceFloat": []
+		},
+		"Slice": [],
+		"Array": [
+			""
+		],
+		"Pointer": null,
+		"Interface": null
+	},
+	"Interface": null
+}`,
 	}, {
 		name: jsontest.Name("Methods/Invalid/JSONv1/Error"),
 		in: marshalJSONv1Func(func() ([]byte, error) {
@@ -7126,12 +7274,114 @@ func TestUnmarshal(t *testing.T) {
 		})),
 		wantErr: &SemanticError{action: "unmarshal", GoType: unmarshalJSONv2FuncType, Err: errors.New("must read exactly one JSON value")},
 	}, {
-		name:  jsontest.Name("Methods/Invalid/JSONv2/SkipFunc"),
-		inBuf: `{}`,
-		inVal: addr(unmarshalJSONv2Func(func(*jsontext.Decoder, Options) error {
-			return SkipFunc
-		})),
-		wantErr: &SemanticError{action: "unmarshal", GoType: unmarshalJSONv2FuncType, Err: errors.New("unmarshal method cannot be skipped")},
+		name: jsontest.Name("Methods/Invalid/JSONv2/SkipFunc"),
+		inBuf: `{
+	"Bool": true,
+	"String": "hello",
+	"Bytes": "AQID",
+	"Int": -64,
+	"Uint": 64,
+	"Float": 3.14159,
+	"Map": {
+		"key": "value"
+	},
+	"StructScalars": {
+		"Bool": true,
+		"String": "hello",
+		"Bytes": "AQID",
+		"Int": -64,
+		"Uint": 64,
+		"Float": 3.14159
+	},
+	"StructMaps": {
+		"MapBool": {
+			"": true
+		},
+		"MapString": {
+			"": "hello"
+		},
+		"MapBytes": {
+			"": "AQID"
+		},
+		"MapInt": {
+			"": -64
+		},
+		"MapUint": {
+			"": 64
+		},
+		"MapFloat": {
+			"": 3.14159
+		}
+	},
+	"StructSlices": {
+		"SliceBool": [
+			true
+		],
+		"SliceString": [
+			"hello"
+		],
+		"SliceBytes": [
+			"AQID"
+		],
+		"SliceInt": [
+			-64
+		],
+		"SliceUint": [
+			64
+		],
+		"SliceFloat": [
+			3.14159
+		]
+	},
+	"Slice": [
+		"fizz",
+		"buzz"
+	],
+	"Array": [
+		"goodbye"
+	],
+	"Pointer": null,
+	"Interface": null
+}`,
+		inVal: new(structAllSkip),
+		opts:  []Options{},
+		want: &structAllSkip{
+			Bool:   true,
+			String: "hello",
+			Bytes:  []byte{1, 2, 3},
+			Int:    -64,
+			Uint:   +64,
+			Float:  3.14159,
+			Map:    map[string]string{"key": "value"},
+			StructScalars: structScalars{
+				Bool:   true,
+				String: "hello",
+				Bytes:  []byte{1, 2, 3},
+				Int:    -64,
+				Uint:   +64,
+				Float:  3.14159,
+			},
+			StructMaps: structMaps{
+				MapBool:   map[string]bool{"": true},
+				MapString: map[string]string{"": "hello"},
+				MapBytes:  map[string][]byte{"": {1, 2, 3}},
+				MapInt:    map[string]int64{"": -64},
+				MapUint:   map[string]uint64{"": +64},
+				MapFloat:  map[string]float64{"": 3.14159},
+			},
+			StructSlices: structSlices{
+				SliceBool:   []bool{true},
+				SliceString: []string{"hello"},
+				SliceBytes:  [][]byte{{1, 2, 3}},
+				SliceInt:    []int64{-64},
+				SliceUint:   []uint64{+64},
+				SliceFloat:  []float64{3.14159},
+			},
+			Slice:   []string{"fizz", "buzz"},
+			Array:   [1]string{"goodbye"},
+			Pointer: nil,
+		},
+		wantErr: nil,
 	}, {
 		name:  jsontest.Name("Methods/Invalid/JSONv1/Error"),
 		inBuf: `{}`,
