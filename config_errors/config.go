@@ -9,7 +9,6 @@ import (
 )
 
 type AppConfig struct {
-	// QSpacesConfig is the configuration of content spaces
 	QSpacesConfig
 }
 
@@ -28,11 +27,11 @@ func (c *AppConfig) UnmarshalJSON(bts []byte) error {
 
 func (c *AppConfig) UnmarshalJSONV2(dec *jsontext.Decoder, opts jsonexp.Options) error {
 	c.InitDefaults()
+
 	type alias AppConfig
 	return jsonexp.UnmarshalDecode(dec, (*alias)(c), opts)
 }
 
-// QSpacesConfig is the configuration for the supported content spaces of this fabric node.
 type QSpacesConfig struct {
 	QSpaces []QSpaceConfig `json:"qspaces"`
 }
@@ -67,9 +66,7 @@ func (c *QSpacesConfig) InitDefaults() *QSpacesConfig {
 	return c
 }
 
-// QSpaceConfig is the configuration of a content space - see qspaceConfigFields.
 type QSpaceConfig struct {
-	// ID is the identifier of the content space
 	ID       string                `json:"id"`             // space ID
 	Names    []string              `json:"names"`          // space names
 	Type     string                `json:"type"`           // Type is one of the supported content space types
@@ -102,6 +99,7 @@ func (c *QSpaceConfig) UnmarshalJSON(bts []byte) error {
 
 func (c *QSpaceConfig) UnmarshalJSONV2(dec *jsontext.Decoder, opts jsonexp.Options) error {
 	c.InitDefaults()
+
 	type alias QSpaceConfig
 	return jsonexp.UnmarshalDecode(dec, (*alias)(c), opts)
 }
@@ -137,10 +135,8 @@ func (c *EthereumQSpaceConfig) Validate() error {
 func (c *EthereumQSpaceConfig) UnmarshalJSON(p []byte) error {
 	c.InitDefaults()
 
-	type ethCfg EthereumQSpaceConfig
-	var o = (*ethCfg)(c)
-
-	err := json.Unmarshal(p, o)
+	type alias EthereumQSpaceConfig
+	err := json.Unmarshal(p, (*alias)(c))
 	if err == nil {
 		//c.Bc.NetworkId = c.NetworkId
 	}
@@ -149,8 +145,8 @@ func (c *EthereumQSpaceConfig) UnmarshalJSON(p []byte) error {
 
 func (c *EthereumQSpaceConfig) UnmarshalJSONV2(dec *jsontext.Decoder, opts jsonexp.Options) error {
 	c.InitDefaults()
-	type alias EthereumQSpaceConfig
 
+	type alias EthereumQSpaceConfig
 	err := jsonexp.UnmarshalDecode(dec, (*alias)(c), opts)
 	if err == nil {
 		//c.Bc.NetworkId = c.NetworkId

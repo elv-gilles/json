@@ -123,22 +123,22 @@ func TestUnmarshalJSONV2Error(t *testing.T) {
 	for i, tc := range []*testCase{
 		{
 			networkId: "123x",
-			wantErr:   "json: cannot unmarshal Go value of type config.AppConfig: json: cannot unmarshal Go value of type config.QSpaceConfig: json: cannot unmarshal Go value of type config.EthereumQSpaceConfig: jsontext: missing character ',' after object or array value",
+			wantErr:   `json: cannot unmarshal Go value of type config.EthereumQSpaceConfig within JSON value at "/qspaces/0/ethereum/network_id": jsontext: missing character ',' after object or array value at byte offset 133`,
 		},
 		{
 			networkId: "-123",
-			wantErr:   "json: cannot unmarshal Go value of type config.AppConfig: json: cannot unmarshal Go value of type config.QSpaceConfig: json: cannot unmarshal Go value of type config.EthereumQSpaceConfig: json: cannot unmarshal JSON number into Go value of type uint64: cannot parse \"-123\" as unsigned integer: invalid syntax",
+			wantErr:   `json: cannot unmarshal JSON number into Go value of type uint64 within JSON value at "/qspaces/0/ethereum/network_id" at byte offset 134: cannot parse "-123" as unsigned integer: invalid syntax`,
 		},
 		{
 			networkId: "\"123:456\"",
-			wantErr:   "json: cannot unmarshal Go value of type config.AppConfig: json: cannot unmarshal Go value of type config.QSpaceConfig: json: cannot unmarshal Go value of type config.EthereumQSpaceConfig: json: cannot unmarshal JSON string into Go value of type uint64",
+			wantErr:   `json: cannot unmarshal JSON string into Go value of type uint64 within JSON value at "/qspaces/0/ethereum/network_id" at byte offset 139: invalid value: "123:456"`,
 		},
 	} {
 		c := &AppConfig{}
 		js := strings.Replace(jsonTemplateNetworkId, "$$", tc.networkId, 1)
 		err := jsonexp.Unmarshal([]byte(js), c)
 		assert.Error(t, err, "test-case %d", i)
-		printError(err, 0)
+		//printError(err, 0)
 
 		assertError(tc, err, i)
 	}

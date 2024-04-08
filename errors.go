@@ -24,7 +24,7 @@ type SemanticError struct {
 
 	action string // either "marshal" or "unmarshal"
 
-	// ByteOffset indicates that an error occurred after this byte offset.
+	// ByteOffset indicates that an error occurred at this byte offset.
 	ByteOffset int64
 	// JSONPointer indicates that an error occurred within this JSON value
 	// as indicated using the JSON Pointer notation (see RFC 6901).
@@ -39,7 +39,24 @@ type SemanticError struct {
 	Err error // may be nil
 }
 
+func (e *SemanticError) innerMost() *SemanticError {
+	ret := e
+	for ret.Err != nil {
+		x, ok := ret.Err.(*SemanticError)
+		if !ok {
+			return ret
+		}
+		ret = x
+	}
+	return ret
+}
+
 func (e *SemanticError) Error() string {
+	x := e.innerMost()
+	return x.FullError()
+}
+
+func (e *SemanticError) FullError() string {
 	var sb strings.Builder
 	sb.WriteString(errorPrefix)
 
@@ -95,13 +112,16 @@ func (e *SemanticError) Error() string {
 	}
 
 	// Format where.
-	switch {
-	case e.JSONPointer != "":
+	if e.JSONPointer != "" {
 		sb.WriteString(" within JSON value at ")
 		sb.WriteString(strconv.Quote(e.JSONPointer))
-	case e.ByteOffset > 0:
-		sb.WriteString(" after byte offset ")
-		sb.WriteString(strconv.FormatInt(e.ByteOffset, 10))
+	}
+	if e.ByteOffset > 0 {
+		_, syntaxErr := e.Err.(*jsontext.SyntacticError)
+		if !syntaxErr { // syntax error carries the byte offset
+			sb.WriteString(" at byte offset ")
+			sb.WriteString(strconv.FormatInt(e.ByteOffset, 10))
+		}
 	}
 
 	// Format underlying error.

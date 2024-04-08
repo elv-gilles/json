@@ -420,7 +420,14 @@ func makeIntArshaler(t reflect.Type) *arshaler {
 			if !ok {
 				if n != math.MaxUint64 {
 					err := fmt.Errorf("cannot parse %q as signed integer: %w", val, strconv.ErrSyntax)
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t, Err: err}
+					return &SemanticError{
+						action:      "unmarshal",
+						ByteOffset:  dec.InputOffset(),
+						JSONPointer: dec.StackPointer(),
+						JSONKind:    k,
+						GoType:      t,
+						Err:         err,
+					}
 				}
 				overflow = true
 			}
@@ -492,7 +499,14 @@ func makeUintArshaler(t reflect.Type) *arshaler {
 			if !ok {
 				if n != math.MaxUint64 {
 					err := fmt.Errorf("cannot parse %q as unsigned integer: %w", val, strconv.ErrSyntax)
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t, Err: err}
+					return &SemanticError{
+						action:      "unmarshal",
+						ByteOffset:  dec.InputOffset(),
+						JSONPointer: dec.StackPointer(),
+						JSONKind:    k,
+						GoType:      t,
+						Err:         err,
+					}
 				}
 				overflow = true
 			}
@@ -503,7 +517,14 @@ func makeUintArshaler(t reflect.Type) *arshaler {
 			va.SetUint(n)
 			return nil
 		}
-		return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t}
+		return &SemanticError{
+			action:      "unmarshal",
+			ByteOffset:  dec.InputOffset(),
+			JSONPointer: dec.StackPointer(),
+			JSONKind:    k,
+			GoType:      t,
+			Err:         fmt.Errorf(`invalid value: %s`, val),
+		}
 	}
 	return &fncs
 }

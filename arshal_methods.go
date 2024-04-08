@@ -201,7 +201,13 @@ func makeMethodArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			if err != nil {
 				err = wrapSkipFunc(err, "unmarshal method")
 				// TODO: Avoid wrapping semantic, syntactic, or I/O errors.
-				return &SemanticError{action: "unmarshal", GoType: t, Err: err}
+				return &SemanticError{
+					action:      "unmarshal",
+					ByteOffset:  dec.InputOffset(),
+					JSONPointer: dec.StackPointer(),
+					GoType:      t,
+					Err:         err,
+				}
 			}
 			return nil
 		}

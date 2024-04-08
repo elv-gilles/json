@@ -5,6 +5,8 @@
 package jsontext
 
 import (
+	"strconv"
+
 	"github.com/go-json-experiment/json/internal/jsonwire"
 )
 
@@ -36,7 +38,11 @@ type SyntacticError struct {
 }
 
 func (e *SyntacticError) Error() string {
-	return errorPrefix + e.str
+	ret := errorPrefix + e.str
+	if e.ByteOffset > 0 {
+		ret += " at byte offset " + strconv.FormatInt(int64(e.ByteOffset), 10)
+	}
+	return ret
 }
 func (e *SyntacticError) withOffset(pos int64) error {
 	return &SyntacticError{ByteOffset: pos, str: e.str}
