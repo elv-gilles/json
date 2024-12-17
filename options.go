@@ -96,10 +96,9 @@ func GetOption[T any](opts Options, setter func(T) Options) (T, bool) {
 }
 
 // DefaultOptionsV2 is the full set of all options that define v2 semantics.
-// It is equivalent to all boolean options under [Options],
-// [encoding/json.Options], and [encoding/json/jsontext.Options]
-// being set to false. All non-boolean options are set to the zero value,
-// except for [jsontext.WithIndent], which defaults to "\t".
+// It is equivalent to all options under [Options], [encoding/json.Options],
+// and [encoding/json/jsontext.Options] being set to false or the zero value,
+// except for the options related to whitespace formatting.
 func DefaultOptionsV2() Options {
 	return &jsonopts.DefaultOptionsV2
 }
@@ -165,6 +164,22 @@ func FormatNilMapAsNull(v bool) Options {
 		return jsonflags.FormatNilMapAsNull | 1
 	} else {
 		return jsonflags.FormatNilMapAsNull | 0
+	}
+}
+
+// OmitZeroStructFields specifies that a Go struct should marshal in such a way
+// that all struct fields that are zero are omitted from the marshaled output
+// if the value is zero as determined by the "IsZero() bool" method if present,
+// otherwise based on whether the field is the zero Go value.
+// This is semantically equivalent to specifying the `omitzero` tag option
+// on every field in a Go struct.
+//
+// This only affects marshaling and is ignored when unmarshaling.
+func OmitZeroStructFields(v bool) Options {
+	if v {
+		return jsonflags.OmitZeroStructFields | 1
+	} else {
+		return jsonflags.OmitZeroStructFields | 0
 	}
 }
 

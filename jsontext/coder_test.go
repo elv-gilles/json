@@ -16,10 +16,29 @@ import (
 	"testing"
 
 	"github.com/go-json-experiment/json/internal/jsontest"
+	"github.com/go-json-experiment/json/internal/jsonwire"
 )
 
-func len64[Bytes ~[]byte | ~string](in Bytes) int64 {
-	return int64(len(in))
+func E(err error) *SyntacticError {
+	return &SyntacticError{Err: err}
+}
+
+func newInvalidCharacterError(prefix, where string) *SyntacticError {
+	return E(jsonwire.NewInvalidCharacterError(prefix, where))
+}
+
+func newInvalidEscapeSequenceError(what string) *SyntacticError {
+	return E(jsonwire.NewInvalidEscapeSequenceError(what))
+}
+
+func (e *SyntacticError) withPos(prefix string, pointer Pointer) *SyntacticError {
+	e.ByteOffset = int64(len(prefix))
+	e.JSONPointer = pointer
+	return e
+}
+
+func equalError(x, y error) bool {
+	return reflect.DeepEqual(x, y)
 }
 
 var (
@@ -38,7 +57,7 @@ type coderTestdataEntry struct {
 	outIndented      string // outCompacted if empty; uses "  " for indent prefix and "\t" for indent
 	outCanonicalized string // outCompacted if empty
 	tokens           []Token
-	pointers         []string
+	pointers         []Pointer
 }
 
 var coderTestdata = []coderTestdataEntry{{
@@ -46,7 +65,7 @@ var coderTestdata = []coderTestdataEntry{{
 	in:           ` null `,
 	outCompacted: `null`,
 	tokens:       []Token{Null},
-	pointers:     []string{""},
+	pointers:     []Pointer{""},
 }, {
 	name:         jsontest.Name("False"),
 	in:           ` false `,
@@ -157,7 +176,7 @@ var coderTestdata = []coderTestdataEntry{{
 		Int(minInt64), Int(maxInt64), Uint(minUint64), Uint(maxUint64),
 		ArrayEnd,
 	},
-	pointers: []string{
+	pointers: []Pointer{
 		"", "/0", "/1", "/2", "/3", "/4", "/5", "/6", "/7", "/8", "/9", "/10", "/11", "/12", "/13", "/14", "/15", "/16", "/17", "",
 	},
 }, {
@@ -165,7 +184,7 @@ var coderTestdata = []coderTestdataEntry{{
 	in:           ` { } `,
 	outCompacted: `{}`,
 	tokens:       []Token{ObjectStart, ObjectEnd},
-	pointers:     []string{"", ""},
+	pointers:     []Pointer{"", ""},
 }, {
 	name:         jsontest.Name("ObjectN1"),
 	in:           ` { "0" : 0 } `,
@@ -175,7 +194,7 @@ var coderTestdata = []coderTestdataEntry{{
 	    "0": 0
 	}`,
 	tokens:   []Token{ObjectStart, String("0"), Uint(0), ObjectEnd},
-	pointers: []string{"", "/0", "/0", ""},
+	pointers: []Pointer{"", "/0", "/0", ""},
 }, {
 	name:         jsontest.Name("ObjectN2"),
 	in:           ` { "0" : 0 , "1" : 1 } `,
@@ -186,7 +205,7 @@ var coderTestdata = []coderTestdataEntry{{
 	    "1": 1
 	}`,
 	tokens:   []Token{ObjectStart, String("0"), Uint(0), String("1"), Uint(1), ObjectEnd},
-	pointers: []string{"", "/0", "/0", "/1", "/1", ""},
+	pointers: []Pointer{"", "/0", "/0", "/1", "/1", ""},
 }, {
 	name:         jsontest.Name("ObjectNested"),
 	in:           ` { "0" : { "1" : { "2" : { "3" : { "4" : {  } } } } } } `,
@@ -204,7 +223,7 @@ var coderTestdata = []coderTestdataEntry{{
 	    }
 	}`,
 	tokens: []Token{ObjectStart, String("0"), ObjectStart, String("1"), ObjectStart, String("2"), ObjectStart, String("3"), ObjectStart, String("4"), ObjectStart, ObjectEnd, ObjectEnd, ObjectEnd, ObjectEnd, ObjectEnd, ObjectEnd},
-	pointers: []string{
+	pointers: []Pointer{
 		"",
 		"/0", "/0",
 		"/0/1", "/0/1",
@@ -268,7 +287,7 @@ var coderTestdata = []coderTestdataEntry{{
 		ObjectEnd,
 		ObjectEnd,
 	},
-	pointers: []string{
+	pointers: []Pointer{
 		"",
 		"/", "/",
 		"//44444", "//44444",
@@ -289,7 +308,7 @@ var coderTestdata = []coderTestdataEntry{{
 	in:           ` [ ] `,
 	outCompacted: `[]`,
 	tokens:       []Token{ArrayStart, ArrayEnd},
-	pointers:     []string{"", ""},
+	pointers:     []Pointer{"", ""},
 }, {
 	name:         jsontest.Name("ArrayN1"),
 	in:           ` [ 0 ] `,
@@ -298,7 +317,7 @@ var coderTestdata = []coderTestdataEntry{{
 	    0
 	]`,
 	tokens:   []Token{ArrayStart, Uint(0), ArrayEnd},
-	pointers: []string{"", "/0", ""},
+	pointers: []Pointer{"", "/0", ""},
 }, {
 	name:         jsontest.Name("ArrayN2"),
 	in:           ` [ 0 , 1 ] `,
@@ -322,7 +341,7 @@ var coderTestdata = []coderTestdataEntry{{
 	    ]
 	]`,
 	tokens: []Token{ArrayStart, ArrayStart, ArrayStart, ArrayStart, ArrayStart, ArrayEnd, ArrayEnd, ArrayEnd, ArrayEnd, ArrayEnd},
-	pointers: []string{
+	pointers: []Pointer{
 		"",
 		"/0",
 		"/0/0",
@@ -388,7 +407,7 @@ var coderTestdata = []coderTestdataEntry{{
 		String("objectN2"), ObjectStart, String("0"), Uint(0), String("1"), Uint(1), ObjectEnd,
 		ObjectEnd,
 	},
-	pointers: []string{
+	pointers: []Pointer{
 		"",
 		"/literals", "/literals",
 		"/literals/0",
@@ -493,70 +512,66 @@ func testCoderInterleaved(t *testing.T, where jsontest.CasePos, modeName string,
 
 func TestCoderStackPointer(t *testing.T) {
 	tests := []struct {
-		token                        Token
-		wantWithRejectDuplicateNames string
-		wantWithAllowDuplicateNames  string
+		token Token
+		want  Pointer
 	}{
-		{Null, "", ""},
+		{Null, ""},
 
-		{ArrayStart, "", ""},
-		{ArrayEnd, "", ""},
+		{ArrayStart, ""},
+		{ArrayEnd, ""},
 
-		{ArrayStart, "", ""},
-		{Bool(true), "/0", "/0"},
-		{ArrayEnd, "", ""},
+		{ArrayStart, ""},
+		{Bool(true), "/0"},
+		{ArrayEnd, ""},
 
-		{ArrayStart, "", ""},
-		{String("hello"), "/0", "/0"},
-		{String("goodbye"), "/1", "/1"},
-		{ArrayEnd, "", ""},
+		{ArrayStart, ""},
+		{String("hello"), "/0"},
+		{String("goodbye"), "/1"},
+		{ArrayEnd, ""},
 
-		{ObjectStart, "", ""},
-		{ObjectEnd, "", ""},
+		{ObjectStart, ""},
+		{ObjectEnd, ""},
 
-		{ObjectStart, "", ""},
-		{String("hello"), "/hello", "/0"},
-		{String("goodbye"), "/hello", "/0"},
-		{ObjectEnd, "", ""},
+		{ObjectStart, ""},
+		{String("hello"), "/hello"},
+		{String("goodbye"), "/hello"},
+		{ObjectEnd, ""},
 
-		{ObjectStart, "", ""},
-		{String(""), "/", "/0"},
-		{Null, "/", "/0"},
-		{String("0"), "/0", "/1"},
-		{Null, "/0", "/1"},
-		{String("~"), "/~0", "/2"},
-		{Null, "/~0", "/2"},
-		{String("/"), "/~1", "/3"},
-		{Null, "/~1", "/3"},
-		{String("a//b~/c/~d~~e"), "/a~1~1b~0~1c~1~0d~0~0e", "/4"},
-		{Null, "/a~1~1b~0~1c~1~0d~0~0e", "/4"},
-		{String(" \r\n\t"), "/ \r\n\t", "/5"},
-		{Null, "/ \r\n\t", "/5"},
-		{ObjectEnd, "", ""},
+		{ObjectStart, ""},
+		{String(""), "/"},
+		{Null, "/"},
+		{String("0"), "/0"},
+		{Null, "/0"},
+		{String("~"), "/~0"},
+		{Null, "/~0"},
+		{String("/"), "/~1"},
+		{Null, "/~1"},
+		{String("a//b~/c/~d~~e"), "/a~1~1b~0~1c~1~0d~0~0e"},
+		{Null, "/a~1~1b~0~1c~1~0d~0~0e"},
+		{String(" \r\n\t"), "/ \r\n\t"},
+		{Null, "/ \r\n\t"},
+		{ObjectEnd, ""},
 
-		{ArrayStart, "", ""},
-		{ObjectStart, "/0", "/0"},
-		{String(""), "/0/", "/0/0"},
-		{ArrayStart, "/0/", "/0/0"},
-		{ObjectStart, "/0//0", "/0/0/0"},
-		{String("#"), "/0//0/#", "/0/0/0/0"},
-		{Null, "/0//0/#", "/0/0/0/0"},
-		{ObjectEnd, "/0//0", "/0/0/0"},
-		{ArrayEnd, "/0/", "/0/0"},
-		{ObjectEnd, "/0", "/0"},
-		{ArrayEnd, "", ""},
+		{ArrayStart, ""},
+		{ObjectStart, "/0"},
+		{String(""), "/0/"},
+		{ArrayStart, "/0/"},
+		{ObjectStart, "/0//0"},
+		{String("#"), "/0//0/#"},
+		{Null, "/0//0/#"},
+		{ObjectEnd, "/0//0"},
+		{ArrayEnd, "/0/"},
+		{ObjectEnd, "/0"},
+		{ArrayEnd, ""},
 	}
 
 	for _, allowDupes := range []bool{false, true} {
 		var name string
-		var want func(i int) string
 		switch allowDupes {
 		case false:
 			name = "RejectDuplicateNames"
-			want = func(i int) string { return tests[i].wantWithRejectDuplicateNames }
 		case true:
 			name = "AllowDuplicateNames"
-			want = func(i int) string { return tests[i].wantWithAllowDuplicateNames }
 		}
 
 		t.Run(name, func(t *testing.T) {
@@ -567,8 +582,8 @@ func TestCoderStackPointer(t *testing.T) {
 				if err := enc.WriteToken(tt.token); err != nil {
 					t.Fatalf("%d: Encoder.WriteToken error: %v", i, err)
 				}
-				if got := enc.StackPointer(); got != want(i) {
-					t.Fatalf("%d: Encoder.StackPointer = %v, want %v", i, got, want(i))
+				if got := enc.StackPointer(); got != tests[i].want {
+					t.Fatalf("%d: Encoder.StackPointer = %v, want %v", i, got, tests[i].want)
 				}
 			}
 
@@ -577,8 +592,8 @@ func TestCoderStackPointer(t *testing.T) {
 				if _, err := dec.ReadToken(); err != nil {
 					t.Fatalf("%d: Decoder.ReadToken error: %v", i, err)
 				}
-				if got := dec.StackPointer(); got != want(i) {
-					t.Fatalf("%d: Decoder.StackPointer = %v, want %v", i, got, want(i))
+				if got := dec.StackPointer(); got != tests[i].want {
+					t.Fatalf("%d: Decoder.StackPointer = %v, want %v", i, got, tests[i].want)
 				}
 			}
 		})
@@ -595,13 +610,13 @@ func TestCoderMaxDepth(t *testing.T) {
 		var dec Decoder
 		checkReadToken := func(t *testing.T, wantKind Kind, wantErr error) {
 			t.Helper()
-			if tok, err := dec.ReadToken(); tok.Kind() != wantKind || !reflect.DeepEqual(err, wantErr) {
+			if tok, err := dec.ReadToken(); tok.Kind() != wantKind || !equalError(err, wantErr) {
 				t.Fatalf("Decoder.ReadToken = (%q, %v), want (%q, %v)", byte(tok.Kind()), err, byte(wantKind), wantErr)
 			}
 		}
 		checkReadValue := func(t *testing.T, wantLen int, wantErr error) {
 			t.Helper()
-			if val, err := dec.ReadValue(); len(val) != wantLen || !reflect.DeepEqual(err, wantErr) {
+			if val, err := dec.ReadValue(); len(val) != wantLen || !equalError(err, wantErr) {
 				t.Fatalf("Decoder.ReadValue = (%d, %v), want (%d, %v)", len(val), err, wantLen, wantErr)
 			}
 		}
@@ -618,29 +633,34 @@ func TestCoderMaxDepth(t *testing.T) {
 		})
 		t.Run("ArraysValid/AllTokens", func(t *testing.T) {
 			dec.s.reset(trimArray(maxArrays), nil)
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkReadToken(t, '[', nil)
 			}
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkReadToken(t, ']', nil)
 			}
 		})
 
+		wantErr := &SyntacticError{
+			ByteOffset:  maxNestingDepth,
+			JSONPointer: Pointer(strings.Repeat("/0", maxNestingDepth)),
+			Err:         errMaxDepth,
+		}
 		t.Run("ArraysInvalid/SingleValue", func(t *testing.T) {
 			dec.s.reset(maxArrays, nil)
-			checkReadValue(t, 0, errMaxDepth.withOffset(maxNestingDepth))
+			checkReadValue(t, 0, wantErr)
 		})
 		t.Run("ArraysInvalid/TokenThenValue", func(t *testing.T) {
 			dec.s.reset(maxArrays, nil)
 			checkReadToken(t, '[', nil)
-			checkReadValue(t, 0, errMaxDepth.withOffset(maxNestingDepth))
+			checkReadValue(t, 0, wantErr)
 		})
 		t.Run("ArraysInvalid/AllTokens", func(t *testing.T) {
 			dec.s.reset(maxArrays, nil)
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkReadToken(t, '[', nil)
 			}
-			checkReadToken(t, 0, errMaxDepth.withOffset(maxNestingDepth))
+			checkReadValue(t, 0, wantErr)
 		})
 
 		t.Run("ObjectsValid/SingleValue", func(t *testing.T) {
@@ -656,33 +676,38 @@ func TestCoderMaxDepth(t *testing.T) {
 		})
 		t.Run("ObjectsValid/AllTokens", func(t *testing.T) {
 			dec.s.reset(trimObject(maxObjects), nil)
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkReadToken(t, '{', nil)
 				checkReadToken(t, '"', nil)
 			}
 			checkReadToken(t, '"', nil)
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkReadToken(t, '}', nil)
 			}
 		})
 
+		wantErr = &SyntacticError{
+			ByteOffset:  maxNestingDepth * int64(len(`{"":`)),
+			JSONPointer: Pointer(strings.Repeat("/", maxNestingDepth)),
+			Err:         errMaxDepth,
+		}
 		t.Run("ObjectsInvalid/SingleValue", func(t *testing.T) {
 			dec.s.reset(maxObjects, nil)
-			checkReadValue(t, 0, errMaxDepth.withOffset(maxNestingDepth*len64(`{"":`)))
+			checkReadValue(t, 0, wantErr)
 		})
 		t.Run("ObjectsInvalid/TokenThenValue", func(t *testing.T) {
 			dec.s.reset(maxObjects, nil)
 			checkReadToken(t, '{', nil)
 			checkReadToken(t, '"', nil)
-			checkReadValue(t, 0, errMaxDepth.withOffset(maxNestingDepth*len64(`{"":`)))
+			checkReadValue(t, 0, wantErr)
 		})
 		t.Run("ObjectsInvalid/AllTokens", func(t *testing.T) {
 			dec.s.reset(maxObjects, nil)
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkReadToken(t, '{', nil)
 				checkReadToken(t, '"', nil)
 			}
-			checkReadToken(t, 0, errMaxDepth.withOffset(maxNestingDepth*len64(`{"":`)))
+			checkReadToken(t, 0, wantErr)
 		})
 	})
 
@@ -690,64 +715,74 @@ func TestCoderMaxDepth(t *testing.T) {
 		var enc Encoder
 		checkWriteToken := func(t *testing.T, tok Token, wantErr error) {
 			t.Helper()
-			if err := enc.WriteToken(tok); !reflect.DeepEqual(err, wantErr) {
+			if err := enc.WriteToken(tok); !equalError(err, wantErr) {
 				t.Fatalf("Encoder.WriteToken = %v, want %v", err, wantErr)
 			}
 		}
 		checkWriteValue := func(t *testing.T, val Value, wantErr error) {
 			t.Helper()
-			if err := enc.WriteValue(val); !reflect.DeepEqual(err, wantErr) {
+			if err := enc.WriteValue(val); !equalError(err, wantErr) {
 				t.Fatalf("Encoder.WriteValue = %v, want %v", err, wantErr)
 			}
 		}
 
+		wantErr := &SyntacticError{
+			ByteOffset:  maxNestingDepth,
+			JSONPointer: Pointer(strings.Repeat("/0", maxNestingDepth)),
+			Err:         errMaxDepth,
+		}
 		t.Run("Arrays/SingleValue", func(t *testing.T) {
 			enc.s.reset(enc.s.Buf[:0], nil)
-			checkWriteValue(t, maxArrays, errMaxDepth.withOffset(maxNestingDepth))
+			checkWriteValue(t, maxArrays, wantErr)
 			checkWriteValue(t, trimArray(maxArrays), nil)
 		})
 		t.Run("Arrays/TokenThenValue", func(t *testing.T) {
 			enc.s.reset(enc.s.Buf[:0], nil)
 			checkWriteToken(t, ArrayStart, nil)
-			checkWriteValue(t, trimArray(maxArrays), errMaxDepth.withOffset(maxNestingDepth))
+			checkWriteValue(t, trimArray(maxArrays), wantErr)
 			checkWriteValue(t, trimArray(trimArray(maxArrays)), nil)
 			checkWriteToken(t, ArrayEnd, nil)
 		})
 		t.Run("Arrays/AllTokens", func(t *testing.T) {
 			enc.s.reset(enc.s.Buf[:0], nil)
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkWriteToken(t, ArrayStart, nil)
 			}
-			checkWriteToken(t, ArrayStart, errMaxDepth.withOffset(maxNestingDepth))
-			for i := 0; i < maxNestingDepth; i++ {
+			checkWriteToken(t, ArrayStart, wantErr)
+			for range maxNestingDepth {
 				checkWriteToken(t, ArrayEnd, nil)
 			}
 		})
 
+		wantErr = &SyntacticError{
+			ByteOffset:  maxNestingDepth * int64(len(`{"":`)),
+			JSONPointer: Pointer(strings.Repeat("/", maxNestingDepth)),
+			Err:         errMaxDepth,
+		}
 		t.Run("Objects/SingleValue", func(t *testing.T) {
 			enc.s.reset(enc.s.Buf[:0], nil)
-			checkWriteValue(t, maxObjects, errMaxDepth.withOffset(maxNestingDepth*len64(`{"":`)))
+			checkWriteValue(t, maxObjects, wantErr)
 			checkWriteValue(t, trimObject(maxObjects), nil)
 		})
 		t.Run("Objects/TokenThenValue", func(t *testing.T) {
 			enc.s.reset(enc.s.Buf[:0], nil)
 			checkWriteToken(t, ObjectStart, nil)
 			checkWriteToken(t, String(""), nil)
-			checkWriteValue(t, trimObject(maxObjects), errMaxDepth.withOffset(maxNestingDepth*len64(`{"":`)))
+			checkWriteValue(t, trimObject(maxObjects), wantErr)
 			checkWriteValue(t, trimObject(trimObject(maxObjects)), nil)
 			checkWriteToken(t, ObjectEnd, nil)
 		})
 		t.Run("Objects/AllTokens", func(t *testing.T) {
 			enc.s.reset(enc.s.Buf[:0], nil)
-			for i := 0; i < maxNestingDepth-1; i++ {
+			for range maxNestingDepth - 1 {
 				checkWriteToken(t, ObjectStart, nil)
 				checkWriteToken(t, String(""), nil)
 			}
 			checkWriteToken(t, ObjectStart, nil)
 			checkWriteToken(t, String(""), nil)
-			checkWriteToken(t, ObjectStart, errMaxDepth.withOffset(maxNestingDepth*len64(`{"":`)))
+			checkWriteToken(t, ObjectStart, wantErr)
 			checkWriteToken(t, String(""), nil)
-			for i := 0; i < maxNestingDepth; i++ {
+			for range maxNestingDepth {
 				checkWriteToken(t, ObjectEnd, nil)
 			}
 		})

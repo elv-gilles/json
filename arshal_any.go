@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/go-json-experiment/json/internal"
 	"github.com/go-json-experiment/json/internal/jsonflags"
 	"github.com/go-json-experiment/json/internal/jsonopts"
 	"github.com/go-json-experiment/json/internal/jsonwire"
@@ -71,9 +72,12 @@ func unmarshalValueAny(dec *jsontext.Decoder, uo *jsonopts.Struct) (any, error) 
 			}
 			return makeString(xd.StringCache, val), nil
 		case '0':
+			if uo.Flags.Get(jsonflags.UnmarshalAnyWithRawNumber) {
+				return internal.RawNumberOf(val), nil
+			}
 			fv, ok := jsonwire.ParseFloat(val, 64)
 			if !ok && uo.Flags.Get(jsonflags.RejectFloatOverflow) {
-				return nil, &SemanticError{action: "unmarshal", JSONKind: k, GoType: float64Type, Err: strconv.ErrRange}
+				return nil, newUnmarshalErrorAfter(dec, float64Type, strconv.ErrRange)
 			}
 			return fv, nil
 		default:
@@ -88,7 +92,7 @@ func marshalObjectAny(enc *jsontext.Encoder, obj map[string]any, mo *jsonopts.St
 	if xe.Tokens.Depth() > startDetectingCyclesAfter {
 		v := reflect.ValueOf(obj)
 		if err := visitPointer(&xe.SeenPointers, v); err != nil {
-			return err
+			return newMarshalErrorBefore(enc, anyType, err)
 		}
 		defer leavePointer(&xe.SeenPointers, v)
 	}
@@ -99,7 +103,7 @@ func marshalObjectAny(enc *jsontext.Encoder, obj map[string]any, mo *jsonopts.St
 			return enc.WriteToken(jsontext.Null)
 		}
 		// Optimize for marshaling an empty map without any preceding whitespace.
-		if !xe.Flags.Get(jsonflags.Expand) && !xe.Tokens.Last.NeedObjectName() {
+		if !xe.Flags.Get(jsonflags.AnyWhitespace) && !xe.Tokens.Last.NeedObjectName() {
 			xe.Buf = append(xe.Tokens.MayAppendDelim(xe.Buf, '{'), "{}"...)
 			xe.Tokens.Last.Increment()
 			if xe.NeedFlush() {
@@ -176,8 +180,9 @@ func unmarshalObjectAny(dec *jsontext.Decoder, uo *jsonopts.Struct) (map[string]
 
 			// Manually check for duplicate names.
 			if _, ok := obj[name]; ok {
-				name := xd.PreviousBuffer()
-				err := export.NewDuplicateNameError(name, dec.InputOffset()-len64(name))
+				// TODO: Unread the object name.
+				name := xd.PreviousTokenOrValue()
+				err := newDuplicateNameError(dec.StackPointer(), nil, dec.InputOffset()-len64(name))
 				return obj, err
 			}
 
@@ -192,7 +197,7 @@ func unmarshalObjectAny(dec *jsontext.Decoder, uo *jsonopts.Struct) (map[string]
 		}
 		return obj, nil
 	}
-	return nil, &SemanticError{action: "unmarshal", JSONKind: k, GoType: mapStringAnyType}
+	return nil, newUnmarshalErrorAfter(dec, mapStringAnyType, nil)
 }
 
 func marshalArrayAny(enc *jsontext.Encoder, arr []any, mo *jsonopts.Struct) error {
@@ -201,7 +206,7 @@ func marshalArrayAny(enc *jsontext.Encoder, arr []any, mo *jsonopts.Struct) erro
 	if xe.Tokens.Depth() > startDetectingCyclesAfter {
 		v := reflect.ValueOf(arr)
 		if err := visitPointer(&xe.SeenPointers, v); err != nil {
-			return err
+			return newMarshalErrorBefore(enc, sliceAnyType, err)
 		}
 		defer leavePointer(&xe.SeenPointers, v)
 	}
@@ -212,7 +217,7 @@ func marshalArrayAny(enc *jsontext.Encoder, arr []any, mo *jsonopts.Struct) erro
 			return enc.WriteToken(jsontext.Null)
 		}
 		// Optimize for marshaling an empty slice without any preceding whitespace.
-		if !xe.Flags.Get(jsonflags.Expand) && !xe.Tokens.Last.NeedObjectName() {
+		if !xe.Flags.Get(jsonflags.AnyWhitespace) && !xe.Tokens.Last.NeedObjectName() {
 			xe.Buf = append(xe.Tokens.MayAppendDelim(xe.Buf, '['), "[]"...)
 			xe.Tokens.Last.Increment()
 			if xe.NeedFlush() {
@@ -259,5 +264,5 @@ func unmarshalArrayAny(dec *jsontext.Decoder, uo *jsonopts.Struct) ([]any, error
 		}
 		return arr, nil
 	}
-	return nil, &SemanticError{action: "unmarshal", JSONKind: k, GoType: sliceAnyType}
+	return nil, newUnmarshalErrorAfter(dec, sliceAnyType, nil)
 }

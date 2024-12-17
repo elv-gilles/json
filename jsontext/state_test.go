@@ -6,10 +6,56 @@ package jsontext
 
 import (
 	"fmt"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestPointer(t *testing.T) {
+	tests := []struct {
+		in         Pointer
+		wantParent Pointer
+		wantLast   string
+		wantTokens []string
+	}{
+		{"", "", "", nil},
+		{"a", "", "a", []string{"a"}},
+		{"~", "", "~", []string{"~"}},
+		{"/a", "", "a", []string{"a"}},
+		{"/foo/bar", "/foo", "bar", []string{"foo", "bar"}},
+		{"///", "//", "", []string{"", "", ""}},
+		{"/~0~1", "", "~/", []string{"~/"}},
+	}
+	for _, tt := range tests {
+		if got := tt.in.Parent(); got != tt.wantParent {
+			t.Errorf("Pointer(%q).Parent = %q, want %q", tt.in, got, tt.wantParent)
+		}
+		if got := tt.in.LastToken(); got != tt.wantLast {
+			t.Errorf("Pointer(%q).Last = %q, want %q", tt.in, got, tt.wantLast)
+		}
+		if strings.HasPrefix(string(tt.in), "/") {
+			if got := tt.in.Parent().AppendToken(tt.in.LastToken()); got != tt.in {
+				t.Errorf("Pointer(%q).Parent().AppendToken(LastToken()) = %q, want %q", tt.in, got, tt.in)
+			}
+			in := tt.in
+			for {
+				if (in + "x").Contains(tt.in) {
+					t.Errorf("Pointer(%q).Contains(%q) = true, want false", in+"x", tt.in)
+				}
+				if !in.Contains(tt.in) {
+					t.Errorf("Pointer(%q).Contains(%q) = false, want true", in, tt.in)
+				}
+				if in == in.Parent() {
+					break
+				}
+				in = in.Parent()
+			}
+		}
+		if got := slices.Collect(tt.in.Tokens()); !slices.Equal(got, tt.wantTokens) {
+			t.Errorf("Pointer(%q).Tokens = %q, want %q", tt.in, got, tt.wantTokens)
+		}
+	}
+}
 
 func TestStateMachine(t *testing.T) {
 	// To test a state machine, we pass an ordered sequence of operations and
@@ -20,7 +66,7 @@ func TestStateMachine(t *testing.T) {
 	type operation any
 	type (
 		// stackLengths checks the results of stateEntry.length accessors.
-		stackLengths []int
+		stackLengths []int64
 
 		// appendTokens is sequence of token kinds to append where
 		// none of them are expected to fail.
@@ -108,12 +154,12 @@ func TestStateMachine(t *testing.T) {
 			appendTokens(`{`),
 
 			// Appending any kind other than string for object name is an error.
-			appendToken{'n', errMissingName},
-			appendToken{'f', errMissingName},
-			appendToken{'t', errMissingName},
-			appendToken{'0', errMissingName},
-			appendToken{'{', errMissingName},
-			appendToken{'[', errMissingName},
+			appendToken{'n', ErrNonStringName},
+			appendToken{'f', ErrNonStringName},
+			appendToken{'t', ErrNonStringName},
+			appendToken{'0', ErrNonStringName},
+			appendToken{'{', ErrNonStringName},
+			appendToken{'[', ErrNonStringName},
 			appendTokens(`"`),
 
 			// Appending '}' without first appending any value is an error.
@@ -156,18 +202,18 @@ func TestStateMachine(t *testing.T) {
 			for _, op := range ops {
 				switch op := op.(type) {
 				case stackLengths:
-					var got []int
-					for i := 0; i < state.Depth(); i++ {
+					var got []int64
+					for i := range state.Depth() {
 						e := state.index(i)
 						got = append(got, e.Length())
 					}
-					want := []int(op)
-					if !reflect.DeepEqual(got, want) {
+					want := []int64(op)
+					if !slices.Equal(got, want) {
 						t.Fatalf("%s: stack lengths mismatch:\ngot  %v\nwant %v", sequence, got, want)
 					}
 				case appendToken:
 					got := state.append(op.kind)
-					if !reflect.DeepEqual(got, op.want) {
+					if !equalError(got, op.want) {
 						t.Fatalf("%s: append('%c') = %v, want %v", sequence, op.kind, got, op.want)
 					}
 					if got == nil {
@@ -311,10 +357,10 @@ func TestObjectNamespace(t *testing.T) {
 
 			// Check that the namespace is consistent.
 			gotNames := []string{}
-			for i := 0; i < ns.length(); i++ {
+			for i := range ns.length() {
 				gotNames = append(gotNames, string(ns.getUnquoted(i)))
 			}
-			if !reflect.DeepEqual(gotNames, wantNames) {
+			if !slices.Equal(gotNames, wantNames) {
 				t.Fatalf("%d: objectNamespace = {%v}, want {%v}", i, strings.Join(gotNames, " "), strings.Join(wantNames, " "))
 			}
 		}
@@ -325,7 +371,7 @@ func TestObjectNamespace(t *testing.T) {
 		}
 
 		// Insert a large number of names.
-		for i := 0; i < 64; i++ {
+		for i := range 64 {
 			ns.InsertUnquoted([]byte(fmt.Sprintf(`name%d`, i)))
 		}
 

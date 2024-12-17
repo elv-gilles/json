@@ -38,6 +38,7 @@ type Options = jsonopts.Options
 //   - [MatchCaseSensitiveDelimiter]
 //   - [OmitEmptyWithLegacyDefinition]
 //   - [RejectFloatOverflow]
+//   - [StringifyWithLegacySemantics]
 //   - [UnmarshalArrayFromAnyLength]
 //   - [jsonv2.Deterministic]
 //   - [jsonv2.FormatNilSliceAsNull]
@@ -147,6 +148,25 @@ func RejectFloatOverflow(v bool) Options {
 	}
 }
 
+// StringifyWithLegacySemantics specifies that the `string` tag option
+// may stringify bools and string values. It only takes effect on fields
+// where the top-level type is a bool, string, numeric kind, or a pointer to
+// such a kind. Specifically, `string` will not stringify bool, string,
+// or numeric kinds within a composite data type
+// (e.g., array, slice, struct, map, or interface).
+//
+// This affects either marshaling or unmarshaling.
+// The v1 default is true.
+func StringifyWithLegacySemantics(v bool) Options {
+	// TODO: In v1, we would permit unmarshaling "null" (i.e., a quoted null)
+	// as if it were just null. We do not support this in v2. Should we?
+	if v {
+		return jsonflags.StringifyWithLegacySemantics | 1
+	} else {
+		return jsonflags.StringifyWithLegacySemantics | 0
+	}
+}
+
 // UnmarshalArrayFromAnyLength specifies that Go arrays can be unmarshaled
 // from input JSON arrays of any length. If the JSON array is too short,
 // then the remaining Go array elements are zeroed. If the JSON array
@@ -159,5 +179,15 @@ func UnmarshalArrayFromAnyLength(v bool) Options {
 		return jsonflags.UnmarshalArrayFromAnyLength | 1
 	} else {
 		return jsonflags.UnmarshalArrayFromAnyLength | 0
+	}
+}
+
+// unmarshalAnyWithRawNumber specifies that unmarshaling a JSON number into
+// an empty Go interface should use the Number type instead of a float64.
+func unmarshalAnyWithRawNumber(v bool) Options {
+	if v {
+		return jsonflags.UnmarshalAnyWithRawNumber | 1
+	} else {
+		return jsonflags.UnmarshalAnyWithRawNumber | 0
 	}
 }

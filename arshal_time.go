@@ -6,6 +6,7 @@ package json
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
@@ -22,8 +23,8 @@ import (
 )
 
 var (
-	timeDurationType = reflect.TypeOf((*time.Duration)(nil)).Elem()
-	timeTimeType     = reflect.TypeOf((*time.Time)(nil)).Elem()
+	timeDurationType = reflect.TypeFor[time.Duration]()
+	timeTimeType     = reflect.TypeFor[time.Time]()
 )
 
 func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
@@ -44,7 +45,7 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			var m durationArshaler
 			if mo.Format != "" && mo.FormatDepth == xe.Tokens.Depth() {
 				if !m.initFormat(mo.Format) {
-					return newInvalidFormatError("marshal", t, mo.Format)
+					return newInvalidFormatError(enc, t, mo.Format)
 				}
 			} else if mo.Flags.Get(jsonflags.FormatTimeDurationAsNanosecond) {
 				return marshalNano(enc, va, mo)
@@ -54,7 +55,10 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			m.td = *va.Addr().Interface().(*time.Duration)
 			k := stringOrNumberKind(!m.isNumeric() || mo.Flags.Get(jsonflags.StringifyNumbers))
 			if err := xe.AppendRaw(k, true, m.appendMarshal); err != nil {
-				return &SemanticError{action: "marshal", GoType: t, Err: err}
+				if !isSyntacticError(err) && !export.IsIOError(err) {
+					err = newMarshalErrorBefore(enc, t, err)
+				}
+				return err
 			}
 			return nil
 		}
@@ -64,7 +68,7 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			var u durationArshaler
 			if uo.Format != "" && uo.FormatDepth == xd.Tokens.Depth() {
 				if !u.initFormat(uo.Format) {
-					return newInvalidFormatError("unmarshal", t, uo.Format)
+					return newInvalidFormatError(dec, t, uo.Format)
 				}
 			} else if uo.Flags.Get(jsonflags.FormatTimeDurationAsNanosecond) {
 				return unmarshalNano(dec, va, uo)
@@ -82,26 +86,25 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 				return nil
 			case '"':
 				if u.isNumeric() && !uo.Flags.Get(jsonflags.StringifyNumbers) {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t}
+					break
 				}
 				val = jsonwire.UnquoteMayCopy(val, flags.IsVerbatim())
 				if err := u.unmarshal(val); err != nil {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t, Err: err}
+					return newUnmarshalErrorAfter(dec, t, err)
 				}
 				*td = u.td
 				return nil
 			case '0':
 				if !u.isNumeric() {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t}
+					break
 				}
 				if err := u.unmarshal(val); err != nil {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t, Err: err}
+					return newUnmarshalErrorAfter(dec, t, err)
 				}
 				*td = u.td
 				return nil
-			default:
-				return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t}
 			}
+			return newUnmarshalErrorAfter(dec, t, nil)
 		}
 	case timeTimeType:
 		fncs.nonDefault = true
@@ -110,7 +113,7 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			var m timeArshaler
 			if mo.Format != "" && mo.FormatDepth == xe.Tokens.Depth() {
 				if !m.initFormat(mo.Format) {
-					return newInvalidFormatError("marshal", t, mo.Format)
+					return newInvalidFormatError(enc, t, mo.Format)
 				}
 			}
 
@@ -118,7 +121,10 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			m.tt = *va.Addr().Interface().(*time.Time)
 			k := stringOrNumberKind(!m.isNumeric() || mo.Flags.Get(jsonflags.StringifyNumbers))
 			if err := xe.AppendRaw(k, !m.hasCustomFormat(), m.appendMarshal); err != nil {
-				return &SemanticError{action: "marshal", GoType: t, Err: err}
+				if !isSyntacticError(err) && !export.IsIOError(err) {
+					err = newMarshalErrorBefore(enc, t, err)
+				}
+				return err
 			}
 			return nil
 		}
@@ -127,7 +133,7 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 			var u timeArshaler
 			if uo.Format != "" && uo.FormatDepth == xd.Tokens.Depth() {
 				if !u.initFormat(uo.Format) {
-					return newInvalidFormatError("unmarshal", t, uo.Format)
+					return newInvalidFormatError(dec, t, uo.Format)
 				}
 			}
 
@@ -143,26 +149,25 @@ func makeTimeArshaler(fncs *arshaler, t reflect.Type) *arshaler {
 				return nil
 			case '"':
 				if u.isNumeric() && !uo.Flags.Get(jsonflags.StringifyNumbers) {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t}
+					break
 				}
 				val = jsonwire.UnquoteMayCopy(val, flags.IsVerbatim())
 				if err := u.unmarshal(val); err != nil {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t, Err: err}
+					return newUnmarshalErrorAfter(dec, t, err)
 				}
 				*tt = u.tt
 				return nil
 			case '0':
 				if !u.isNumeric() {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t}
+					break
 				}
 				if err := u.unmarshal(val); err != nil {
-					return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t, Err: err}
+					return newUnmarshalErrorAfter(dec, t, err)
 				}
 				*tt = u.tt
 				return nil
-			default:
-				return &SemanticError{action: "unmarshal", JSONKind: k, GoType: t}
 			}
+			return newUnmarshalErrorAfter(dec, t, nil)
 		}
 	}
 	return fncs
@@ -317,11 +322,7 @@ func (a *timeArshaler) hasCustomFormat() bool {
 func (a *timeArshaler) appendMarshal(b []byte) ([]byte, error) {
 	switch a.base {
 	case 0:
-		// TODO(https://go.dev/issue/60204): Use cmp.Or(a.format, time.RFC3339Nano).
-		format := a.format
-		if format == "" {
-			format = time.RFC3339Nano
-		}
+		format := cmp.Or(a.format, time.RFC3339Nano)
 		n0 := len(b)
 		b = a.tt.AppendFormat(b, format)
 		// Not all Go timestamps can be represented as valid RFC 3339.
